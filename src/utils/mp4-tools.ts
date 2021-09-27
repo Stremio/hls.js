@@ -121,7 +121,9 @@ type SidxInfo = {
   moovEndOffset: number | null;
 };
 
-export function parseSegmentIndex(initSegment: Uint8Array): SidxInfo | null {
+export function parseSegmentIndex(
+  initSegment: Uint8Array | Mp4BoxData
+): SidxInfo | null {
   const moovBox = findBox(initSegment, ['moov']);
   const moov = moovBox[0];
   const moovEndOffset = moov ? moov.end : null; // we need this in case we need to chop of garbage of the end of current data
@@ -390,9 +392,24 @@ export function getStartDTS(initData: InitData, fmp4: Uint8Array): number {
   }
  */
 export function getDuration(data: Uint8Array, initData: InitData) {
-  let rawDuration = 0;
-  let videoDuration = 0;
-  let audioDuration = 0;
+  let duration = 0;
+  const sidxs = findBox(data, ['sidx']);
+  for (let i = 0; i < sidxs.length; i++) {
+    const sidx = parseSegmentIndex({
+      ...sidxs[i],
+      start: sidxs[i].start - 8,
+    });
+    if (sidx?.references) {
+      duration += sidx.references.reduce(
+        (dur, ref) => dur + ref.info.duration || 0,
+        0
+      );
+    }
+  }
+  if (duration) {
+    return duration;
+  }
+
   const trafs = findBox(data, ['moof', 'traf']);
   for (let i = 0; i < trafs.length; i++) {
     const traf = trafs[i];
@@ -425,32 +442,16 @@ export function getDuration(data: Uint8Array, initData: InitData) {
     const timescale = track.timescale || 90e3;
     const truns = findBox(traf, ['trun']);
     for (let j = 0; j < truns.length; j++) {
-      rawDuration = computeRawDurationFromSamples(truns[j]);
-      if (!rawDuration && sampleDuration) {
+      let trunDuration = computeRawDurationFromSamples(truns[j]);
+      if (!trunDuration && sampleDuration) {
         const sampleCount = readUint32(truns[j], 4);
-        rawDuration = sampleDuration * sampleCount;
+        trunDuration = sampleDuration * sampleCount;
       }
-      if (track.type === ElementaryStreamTypes.VIDEO) {
-        videoDuration += rawDuration / timescale;
-      } else if (track.type === ElementaryStreamTypes.AUDIO) {
-        audioDuration += rawDuration / timescale;
-      }
+      duration += trunDuration / timescale;
     }
   }
-  if (videoDuration === 0 && audioDuration === 0) {
-    // If duration samples are not available in the traf use sidx subsegment_duration
-    const sidx = parseSegmentIndex(data);
-    if (sidx?.references) {
-      return sidx.references.reduce(
-        (dur, ref) => dur + ref.info.duration || 0,
-        0
-      );
-    }
-  }
-  if (videoDuration) {
-    return videoDuration;
-  }
-  return audioDuration;
+
+  return duration;
 }
 
 /*
