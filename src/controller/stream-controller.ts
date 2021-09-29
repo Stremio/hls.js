@@ -891,7 +891,15 @@ export default class StreamController
             );
             // flush main buffer
             this.immediateLevelSwitch();
+          } else {
+            const fragCurrent = this.fragCurrent;
+            this.abortCurrentFrag();
+            if (fragCurrent) {
+              this.flushMainBuffer(fragCurrent.start, Number.POSITIVE_INFINITY);
+              this.nextLoadPosition = fragCurrent.start;
+            }
           }
+          this.resetTransmuxer();
           this.resetLoadingState();
         }
         break;
