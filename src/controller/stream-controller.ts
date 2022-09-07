@@ -13,7 +13,6 @@ import type { TransmuxerResult } from '../types/transmuxer';
 import { ChunkMetadata } from '../types/transmuxer';
 import GapController from './gap-controller';
 import { ErrorDetails } from '../errors';
-import { logger } from '../utils/logger';
 import type Hls from '../hls';
 import type { LevelDetails } from '../loader/level-details';
 import type { TrackSet } from '../types/track';
@@ -52,7 +51,6 @@ export default class StreamController
   private onvplaying: EventListener | null = null;
   private onvseeked: EventListener | null = null;
   private fragLastKbps: number = 0;
-  private stalled: boolean = false;
   private couldBacktrack: boolean = false;
   private backtrackFragment: Fragment | null = null;
   private audioCodecSwitch: boolean = false;
@@ -122,7 +120,7 @@ export default class StreamController
         // determine load level
         let startLevel = hls.startLevel;
         if (startLevel === -1) {
-          if (hls.config.testBandwidth) {
+          if (hls.config.testBandwidth && this.levels.length > 1) {
             // -1 : guess start Level by doing a bitrate test by loading first fragment of lowest quality level
             startLevel = 0;
             this.bitrateTest = true;
@@ -185,6 +183,7 @@ export default class StreamController
           // if current time is gt than retryDate, or if media seeking let's switch to IDLE state to retry loading
           if (!retryDate || now >= retryDate || this.media?.seeking) {
             this.log('retryDate reached, switch back to IDLE state');
+            this.resetStartWhenNotLoaded(this.level);
             this.state = State.IDLE;
           }
         }
@@ -309,7 +308,9 @@ export default class StreamController
         this.audioOnly && !this.altAudio
           ? ElementaryStreamTypes.AUDIO
           : ElementaryStreamTypes.VIDEO;
-      this.afterBufferFlushed(media, type, PlaylistLevelType.MAIN);
+      if (media) {
+        this.afterBufferFlushed(media, type, PlaylistLevelType.MAIN);
+      }
       frag = this.getNextFragment(this.nextLoadPosition, levelDetails);
     }
     if (!frag) {
@@ -343,7 +344,6 @@ export default class StreamController
       if (frag.sn === 'initSegment') {
         this._loadInitSegment(frag);
       } else if (this.bitrateTest) {
-        frag.bitrateTest = true;
         this.log(
           `Fragment ${frag.sn} of level ${frag.level} is being downloaded to test bitrate and will not be buffered`
         );
@@ -511,7 +511,7 @@ export default class StreamController
 
   protected onMediaDetaching() {
     const { media } = this;
-    if (media) {
+    if (media && this.onvplaying && this.onvseeked) {
       media.removeEventListener('playing', this.onvplaying);
       media.removeEventListener('seeked', this.onvseeked);
       this.onvplaying = this.onvseeked = null;
@@ -534,7 +534,7 @@ export default class StreamController
     const media = this.media;
     const currentTime = media ? media.currentTime : null;
     if (Number.isFinite(currentTime)) {
-      this.log(`Media seeked to ${currentTime.toFixed(3)}`);
+      this.log(`Media seeked to ${(currentTime as number).toFixed(3)}`);
     }
 
     // tick to speed up FRAG_CHANGED triggering
@@ -546,7 +546,7 @@ export default class StreamController
     this.log('Trigger BUFFER_RESET');
     this.hls.trigger(Events.BUFFER_RESET, undefined);
     this.fragmentTracker.removeAllFragments();
-    this.couldBacktrack = this.stalled = false;
+    this.couldBacktrack = false;
     this.startPosition = this.lastCurrentTime = 0;
     this.fragPlaying = null;
     this.backtrackFragment = null;
@@ -984,13 +984,16 @@ export default class StreamController
    */
   private seekToStartPos() {
     const { media } = this;
+    if (!media) {
+      return;
+    }
     const currentTime = media.currentTime;
     let startPosition = this.startPosition;
     // only adjust currentTime if different from startPosition or if startPosition not buffered
     // at that stage, there should be only one buffered range, as we reach that code after first fragment has been buffered
     if (startPosition >= 0 && currentTime < startPosition) {
       if (media.seeking) {
-        logger.log(
+        this.log(
           `could not seek to ${startPosition}, already seeking at ${currentTime}`
         );
         return;
@@ -1003,9 +1006,7 @@ export default class StreamController
         (delta < this.config.maxBufferHole ||
           delta < this.config.maxFragLookUpTolerance)
       ) {
-        logger.log(
-          `adjusting start position by ${delta} to match buffer start`
-        );
+        this.log(`adjusting start position by ${delta} to match buffer start`);
         startPosition += delta;
         this.startPosition = startPosition;
       }
@@ -1031,6 +1032,7 @@ export default class StreamController
   }
 
   private _loadBitrateTestFrag(frag: Fragment) {
+    frag.bitrateTest = true;
     this._doFragLoad(frag).then((data) => {
       const { hls } = this;
       if (!data || hls.nextLoadLevel || this.fragContextChanged(frag)) {
@@ -1048,6 +1050,7 @@ export default class StreamController
         stats.buffering.end =
           self.performance.now();
       hls.trigger(Events.FRAG_LOADED, data as FragLoadedData);
+      frag.bitrateTest = false;
     });
   }
 
@@ -1061,7 +1064,7 @@ export default class StreamController
       this.warn(
         `The loading context changed while buffering fragment ${chunkMeta.sn} of level ${chunkMeta.level}. This chunk will not be buffered.`
       );
-      this.resetLiveStartWhenNotLoaded(chunkMeta.level);
+      this.resetStartWhenNotLoaded(chunkMeta.level);
       return;
     }
     const { frag, part, level } = context;

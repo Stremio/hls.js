@@ -33,6 +33,7 @@ import type {
   ManifestLoadingData,
   TrackLoadingData,
 } from '../types/events';
+import { NetworkComponentAPI } from '../types/component-api';
 
 function mapContextToLevelType(
   context: PlaylistLoaderContext
@@ -63,7 +64,7 @@ function getResponseUrl(
   return url;
 }
 
-class PlaylistLoader {
+class PlaylistLoader implements NetworkComponentAPI {
   private readonly hls: Hls;
   private readonly loaders: {
     [key: string]: Loader<LoaderContext>;
@@ -72,6 +73,12 @@ class PlaylistLoader {
   constructor(hls: Hls) {
     this.hls = hls;
     this.registerListeners();
+  }
+
+  public startLoad(startPosition: number): void {}
+
+  public stopLoad(): void {
+    this.destroyInternalLoaders();
   }
 
   private registerListeners() {
@@ -544,14 +551,12 @@ class PlaylistLoader {
     context: PlaylistLoaderContext
   ): void {
     const data = new Uint8Array(response.data as ArrayBuffer);
-    const moovBox = findBox(data, ['moov'])[0];
-    const moovEndOffset = moovBox ? moovBox.length : null; // we need this in case we need to chop of garbage of the end of current data
     const sidxBox = findBox(data, ['sidx'])[0];
+    // if provided fragment does not contain sidx, early return
     if (!sidxBox) {
       return;
     }
     const sidxInfo = parseSegmentIndex(sidxBox);
-    // if provided fragment does not contain sidx, early return
     if (!sidxInfo) {
       return;
     }
@@ -569,6 +574,8 @@ class PlaylistLoader {
         );
       }
       if (frag.initSegment) {
+        const moovBox = findBox(data, ['moov'])[0];
+        const moovEndOffset = moovBox ? moovBox.length : null;
         frag.initSegment.setByteRange(String(moovEndOffset) + '@0');
       }
     });
