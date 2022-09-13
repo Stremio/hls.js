@@ -337,10 +337,7 @@ export default class StreamController
     // Check if fragment is not loaded
     const fragState = this.fragmentTracker.getState(frag);
     this.fragCurrent = frag;
-    if (
-      fragState === FragmentState.NOT_LOADED ||
-      fragState === FragmentState.PARTIAL
-    ) {
+    if (fragState === FragmentState.NOT_LOADED) {
       if (frag.sn === 'initSegment') {
         this._loadInitSegment(frag);
       } else if (this.bitrateTest) {
@@ -925,13 +922,7 @@ export default class StreamController
       return;
     }
 
-    // Check combined buffer
-    const buffered = BufferHelper.getBuffered(media);
-
-    if (!this.loadedmetadata && buffered.length) {
-      this.loadedmetadata = true;
-      this.seekToStartPos();
-    } else {
+    if (this.loadedmetadata || !BufferHelper.getBuffered(media).length) {
       // Resolve gaps using the main buffer, whose ranges are the intersections of the A/V sourcebuffers
       const activeFrag = this.state !== State.IDLE ? this.fragCurrent : null;
       gapController.poll(this.lastCurrentTime, activeFrag);
@@ -980,9 +971,8 @@ export default class StreamController
 
   /**
    * Seeks to the set startPosition if not equal to the mediaElement's current time.
-   * @private
    */
-  private seekToStartPos() {
+  protected seekToStartPos() {
     const { media } = this;
     if (!media) {
       return;
