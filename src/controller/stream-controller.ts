@@ -912,7 +912,18 @@ export default class StreamController
         }
         if (this.reduceLengthAndFlushBuffer(data)) {
           this.flushMainBuffer(0, Number.POSITIVE_INFINITY);
+        } else {
+          const fragCurrent = this.fragCurrent;
+          this.abortCurrentFrag();
+          if (fragCurrent) {
+            this.flushMainBuffer(fragCurrent.start, Number.POSITIVE_INFINITY);
+            this.nextLoadPosition = fragCurrent.start;
+          }
         }
+        // destroy transmuxer to force init segment generation (following audio switch)
+        this.resetTransmuxer();
+        // switch to IDLE state to load new fragment
+        this.resetLoadingState();
         break;
       case ErrorDetails.INTERNAL_EXCEPTION:
         this.recoverWorkerError(data);
