@@ -421,6 +421,21 @@ export function getStartDTS(
   }
  */
 export function getDuration(data: Uint8Array, initData: InitData) {
+  let sidxDuration = 0;
+  const sidxs = findBox(data, ['sidx']);
+  for (let i = 0; i < sidxs.length; i++) {
+    const sidx = parseSegmentIndex(sidxs[i]);
+    if (sidx?.references) {
+      sidxDuration += sidx.references.reduce(
+        (dur, ref) => dur + ref.info.duration || 0,
+        0
+      );
+    }
+  }
+  if (sidxDuration) {
+    return sidxDuration;
+  }
+
   let rawDuration = 0;
   let videoDuration = 0;
   let audioDuration = 0;
@@ -467,22 +482,6 @@ export function getDuration(data: Uint8Array, initData: InitData) {
         audioDuration += rawDuration / timescale;
       }
     }
-  }
-  if (videoDuration === 0 && audioDuration === 0) {
-    // If duration samples are not available in the traf use sidx subsegment_duration
-    let sidxDuration = 0;
-    const sidxs = findBox(data, ['sidx']);
-    for (let i = 0; i < sidxs.length; i++) {
-      const sidx = parseSegmentIndex(sidxs[i]);
-      if (sidx?.references) {
-        sidxDuration += sidx.references.reduce(
-          (dur, ref) => dur + ref.info.duration || 0,
-          0
-        );
-      }
-    }
-
-    return sidxDuration;
   }
   if (videoDuration) {
     return videoDuration;
