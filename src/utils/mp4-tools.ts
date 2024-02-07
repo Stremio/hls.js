@@ -635,6 +635,32 @@ export function getStartDTS(
   }
  */
 export function getDuration(data: Uint8Array, initData: InitData) {
+  let sidxMinStart = Infinity;
+  let sidxMaxEnd = 0;
+  let sidxDuration = 0;
+  const sidxs = findBox(data, ['sidx']);
+  for (let i = 0; i < sidxs.length; i++) {
+    const sidx = parseSegmentIndex(sidxs[i]);
+    if (sidx?.references) {
+      sidxMinStart = Math.min(
+        sidxMinStart,
+        sidx.earliestPresentationTime / sidx.timescale,
+      );
+      const subSegmentDuration = sidx.references.reduce(
+        (dur, ref) => dur + ref.info.duration || 0,
+        0,
+      );
+      sidxMaxEnd = Math.max(
+        sidxMaxEnd,
+        subSegmentDuration + sidx.earliestPresentationTime / sidx.timescale,
+      );
+      sidxDuration = sidxMaxEnd - sidxMinStart;
+    }
+  }
+  if (sidxDuration && Number.isFinite(sidxDuration)) {
+    return sidxDuration;
+  }
+
   let rawDuration = 0;
   let videoDuration = 0;
   let audioDuration = 0;
@@ -680,34 +706,6 @@ export function getDuration(data: Uint8Array, initData: InitData) {
       } else if (track.type === ElementaryStreamTypes.AUDIO) {
         audioDuration += rawDuration / timescale;
       }
-    }
-  }
-  if (videoDuration === 0 && audioDuration === 0) {
-    // If duration samples are not available in the traf use sidx subsegment_duration
-    let sidxMinStart = Infinity;
-    let sidxMaxEnd = 0;
-    let sidxDuration = 0;
-    const sidxs = findBox(data, ['sidx']);
-    for (let i = 0; i < sidxs.length; i++) {
-      const sidx = parseSegmentIndex(sidxs[i]);
-      if (sidx?.references) {
-        sidxMinStart = Math.min(
-          sidxMinStart,
-          sidx.earliestPresentationTime / sidx.timescale,
-        );
-        const subSegmentDuration = sidx.references.reduce(
-          (dur, ref) => dur + ref.info.duration || 0,
-          0,
-        );
-        sidxMaxEnd = Math.max(
-          sidxMaxEnd,
-          subSegmentDuration + sidx.earliestPresentationTime / sidx.timescale,
-        );
-        sidxDuration = sidxMaxEnd - sidxMinStart;
-      }
-    }
-    if (sidxDuration && Number.isFinite(sidxDuration)) {
-      return sidxDuration;
     }
   }
   if (videoDuration) {
